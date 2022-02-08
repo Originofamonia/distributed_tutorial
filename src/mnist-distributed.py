@@ -46,8 +46,10 @@ def main():
                                                transform=transforms.ToTensor(),
                                                download=True)
     model = ConvNet()
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), args.lr)
 
-    mp.spawn(train, nprocs=args.gpus, args=(args, train_dataset, model))
+    mp.spawn(train, nprocs=args.gpus, args=(args, train_dataset, model, loss_fn, optimizer))
 
 
 class ConvNet(nn.Module):
@@ -73,7 +75,7 @@ class ConvNet(nn.Module):
         return out
 
 
-def train(gpu, args, train_dataset, model):
+def train(gpu, args, train_dataset, model, loss_fn, optimizer):
     print(f'using GPU: {gpu}')
     rank = args.nr * args.gpus + gpu
     dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
@@ -82,8 +84,7 @@ def train(gpu, args, train_dataset, model):
     model.cuda(gpu)
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), args.lr)
+    
     # Wrap the model
     model = DDP(model, device_ids=[gpu])
     # Data loading code
@@ -105,7 +106,7 @@ def train(gpu, args, train_dataset, model):
             images, labels = batch
             # Forward pass
             outputs = model(images)
-            loss = criterion(outputs, labels)
+            loss = loss_fn(outputs, labels)
 
             # Backward and optimize
             optimizer.zero_grad()
