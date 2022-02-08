@@ -1,5 +1,6 @@
 """
 https://github.com/Originofamonia/distributed_tutorial
+https://pytorch.org/tutorials/intermediate/ddp_tutorial.html
 """
 import os
 from datetime import datetime
@@ -35,27 +36,32 @@ def main():
                         help='seed')
     parser.add_argument('--lr', default=1e-3, type=float,
                         help='learning rate')
+    parser.add_argument('--ddp', default=True, type=bool,
+                        help='whether use DDP')                        
+    parser.add_argument('--save', default=True, type=bool,
+                        help='save model after training')
     parser.add_argument('--resume', default=True, type=bool,
                         help='load saved model and resume training')
     parser.add_argument('--ckpt_path', default=f'model.pt', type=str,
                         help='ckpt path')
     parser.add_argument('--epochs', default=2, type=int, metavar='N',
                         help='number of total epochs to run')
-    args = parser.parse_args()
-    args.world_size = args.gpus * args.nodes
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '14444'
-
-    torch.manual_seed(args.seed)
+    opt = parser.parse_args()
+    torch.manual_seed(opt.seed)
     train_dataset = torchvision.datasets.CIFAR10(root='./',
                                                train=True,
                                                transform=transforms.ToTensor(),
                                                download=True)
     model = ConvNet()
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), args.lr)
-
-    mp.spawn(train, nprocs=args.gpus, args=(args, train_dataset, model, loss_fn, optimizer))
+    optimizer = torch.optim.SGD(model.parameters(), opt.lr)
+    if opt.ddp:
+        opt.world_size = opt.gpus * opt.nodes
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '14444'
+        mp.spawn(train, nprocs=opt.gpus, args=(opt, train_dataset, model, loss_fn, optimizer))
+    else:
+        train('1', opt, train_dataset, model, loss_fn, optimizer)
 
 
 class ConvNet(nn.Module):
@@ -81,36 +87,42 @@ class ConvNet(nn.Module):
         return out
 
 
-def train(gpu, args, train_dataset, model, loss_fn, optimizer):
+def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
     print(f'using gpu: {gpu}')
-    rank = args.nr * args.gpus + gpu
-    dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
+    if opt.ddp:
+        rank = opt.nr * opt.gpus + gpu
+        dist.init_process_group(backend='nccl', init_method='env://', world_size=opt.world_size, rank=rank)
+        torch.cuda.set_device(gpu)
+        model.cuda(gpu)
+        model = DDP(model, device_ids=[gpu])
+        # Data loading code
+        train_sampler = DistributedSampler(train_dataset,
+                                        num_replicas=opt.world_size,
+                                        rank=rank)
+        train_loader = DataLoader(dataset=train_dataset,
+                                batch_size=opt.batch_size,
+                                shuffle=False,  # must be False
+                                num_workers=2,
+                                pin_memory=True,
+                                sampler=train_sampler)
+    else:
+        model.cuda()
+        train_loader = DataLoader(dataset=train_dataset,
+                                batch_size=opt.batch_size,
+                                shuffle=True,
+                                num_workers=2,
+                                pin_memory=True)
 
-    torch.cuda.set_device(gpu)
-    model.cuda(gpu)
-
-    # Wrap the model
-    model = DDP(model, device_ids=[gpu])
-    # Data loading code
-    train_sampler = DistributedSampler(train_dataset,
-                                       num_replicas=args.world_size,
-                                       rank=rank)
-    train_loader = DataLoader(dataset=train_dataset,
-                              batch_size=args.batch_size,
-                              shuffle=False,  # must be False
-                              num_workers=2,
-                              pin_memory=True,
-                              sampler=train_sampler)
-
-    if args.resume:
-        print(f'resume training: {rank}')
+    if opt.resume:
+        print(f'resume training: {gpu}')
         dist.barrier()
-        map_location = {f'cuda:0': f'cuda:{rank}'}
-        model.load_state_dict(torch.load(args.ckpt_path, map_location=map_location))
+        map_location = {f'cuda:0': f'cuda:{gpu}'}
+        print(f'map location: {map_location}')
+        model.load_state_dict(torch.load(opt.ckpt_path, map_location=map_location))
 
     start = datetime.now()
     total_step = len(train_loader)
-    for epoch in range(args.epochs):
+    for epoch in range(opt.epochs):
         for j, batch in enumerate(train_loader):
             batch = tuple(item.cuda() for item in batch)
             images, labels = batch
@@ -122,16 +134,17 @@ def train(gpu, args, train_dataset, model, loss_fn, optimizer):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if (j) % 100 == 0 and gpu == 0:
-                print(f'Epoch [{epoch}/{args.epochs}], Step [{j}/{total_step}], Loss: {loss.item():.3f}')
+            if (j) % 100 == 0 and gpu:
+                print(f'Epoch [{epoch}/{opt.epochs}], Step [{j}/{total_step}], Loss: {loss.item():.3f}')
     
-    if rank == 0:
+    if gpu and opt.save:
         # All processes should see same parameters as they all start from same
         # random parameters and gradients are synchronized in backward passes.
         # Therefore, saving it in one process is sufficient.
-        torch.save(model.state_dict(), args.ckpt_path)
+        print(f'save model: {gpu}')
+        torch.save(model.state_dict(), opt.ckpt_path)
 
-    if gpu == 0:
+    if gpu:
         print("Training complete in: " + str(datetime.now() - start))
     
     cleanup()
