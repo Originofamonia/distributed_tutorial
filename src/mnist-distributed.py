@@ -39,7 +39,13 @@ def main():
     args.world_size = args.gpus * args.nodes
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '14444'
-    mp.spawn(train, nprocs=args.gpus, args=(args,))
+
+    torch.manual_seed(args.seed)
+    train_dataset = torchvision.datasets.CIFAR10(root='./',
+                                               train=True,
+                                               transform=transforms.ToTensor(),
+                                               download=True)
+    mp.spawn(train, nprocs=args.gpus, args=(args, train_dataset))
 
 
 class ConvNet(nn.Module):
@@ -65,11 +71,10 @@ class ConvNet(nn.Module):
         return out
 
 
-def train(gpu, args):
+def train(gpu, args, train_dataset):
     print(f'using GPU: {gpu}')
     rank = args.nr * args.gpus + gpu
     dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
-    torch.manual_seed(args.seed)
 
     model = ConvNet()
     torch.cuda.set_device(gpu)
@@ -81,10 +86,6 @@ def train(gpu, args):
     # Wrap the model
     model = DDP(model, device_ids=[gpu])
     # Data loading code
-    train_dataset = torchvision.datasets.CIFAR10(root='./',
-                                               train=True,
-                                               transform=transforms.ToTensor(),
-                                               download=True)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset,
                                                                     num_replicas=args.world_size,
                                                                     rank=rank)
@@ -109,7 +110,7 @@ def train(gpu, args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if (j) % 100 == 0:  # and gpu == 0:
+            if (j) % 100 == 0 and gpu == 0:
                 print(f'Epoch [{epoch}/{args.epochs}], Step [{j}/{total_step}], Loss: {loss.item():.3f}')
     
     if rank == 0:
