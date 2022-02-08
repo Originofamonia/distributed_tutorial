@@ -45,7 +45,9 @@ def main():
                                                train=True,
                                                transform=transforms.ToTensor(),
                                                download=True)
-    mp.spawn(train, nprocs=args.gpus, args=(args, train_dataset))
+    model = ConvNet()
+
+    mp.spawn(train, nprocs=args.gpus, args=(args, train_dataset, model))
 
 
 class ConvNet(nn.Module):
@@ -71,12 +73,11 @@ class ConvNet(nn.Module):
         return out
 
 
-def train(gpu, args, train_dataset):
+def train(gpu, args, train_dataset, model):
     print(f'using GPU: {gpu}')
     rank = args.nr * args.gpus + gpu
     dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
 
-    model = ConvNet()
     torch.cuda.set_device(gpu)
     model.cuda(gpu)
 
