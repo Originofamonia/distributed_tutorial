@@ -10,6 +10,8 @@ import torchvision.transforms as transforms
 import torch
 import torch.nn as nn
 import torch.distributed as dist
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 # from apex.parallel import DistributedDataParallel as DDP
 from torch.cuda import amp
@@ -33,6 +35,10 @@ def main():
                         help='seed')
     parser.add_argument('--lr', default=1e-3, type=float,
                         help='learning rate')
+    parser.add_argument('--resume', default=True, type=bool,
+                        help='load saved model and resume training')
+    parser.add_argument('--ckpt_path', default=f'model.pt', type=str,
+                        help='ckpt path')
     parser.add_argument('--epochs', default=2, type=int, metavar='N',
                         help='number of total epochs to run')
     args = parser.parse_args()
@@ -82,21 +88,24 @@ def train(gpu, args, train_dataset, model, loss_fn, optimizer):
 
     torch.cuda.set_device(gpu)
     model.cuda(gpu)
-
-    # define loss function (criterion) and optimizer
     
     # Wrap the model
     model = DDP(model, device_ids=[gpu])
     # Data loading code
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset,
-                                                                    num_replicas=args.world_size,
-                                                                    rank=rank)
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                               batch_size=args.batch_size,
-                                               shuffle=False,  # must be False
-                                               num_workers=4,
-                                               pin_memory=True,
-                                               sampler=train_sampler)
+    train_sampler = DistributedSampler(train_dataset,
+                                       num_replicas=args.world_size,
+                                       rank=rank)
+    train_loader = DataLoader(dataset=train_dataset,
+                              batch_size=args.batch_size,
+                              shuffle=False,  # must be False
+                              num_workers=2,
+                              pin_memory=True,
+                              sampler=train_sampler)
+    
+    if args.resume:
+        dist.barrier()
+        map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+        model.load_state_dict(torch.load(args.ckpt_path, map_location=map_location))
 
     start = datetime.now()
     total_step = len(train_loader)
@@ -119,8 +128,7 @@ def train(gpu, args, train_dataset, model, loss_fn, optimizer):
         # All processes should see same parameters as they all start from same
         # random parameters and gradients are synchronized in backward passes.
         # Therefore, saving it in one process is sufficient.
-        ckpt_path = f'model.pt'
-        torch.save(model.state_dict(), ckpt_path)
+        torch.save(model.state_dict(), args.ckpt_path)
 
     if gpu == 0:
         print("Training complete in: " + str(datetime.now() - start))
