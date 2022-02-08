@@ -116,9 +116,11 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
         print(f'resume training: {gpu}')
         if opt.rank != -1:
             dist.barrier()
-        map_location = {f'cuda:0': f'cuda:{gpu}'}
-        print(f'map location: {map_location}')
-        model.load_state_dict(torch.load(opt.ckpt_path, map_location=map_location))
+            map_location = {f'cuda:0': f'cuda:{gpu}'}
+            print(f'map location: {map_location}')
+            model.load_state_dict(torch.load(opt.ckpt_path, map_location=map_location))
+        else:
+            model.load_state_dict(torch.load(opt.ckpt_path))
 
     start = datetime.now()
     total_step = len(train_loader)
