@@ -1,6 +1,8 @@
 """
 https://github.com/Originofamonia/distributed_tutorial
 https://pytorch.org/tutorials/intermediate/ddp_tutorial.html
+DDP and non-DDP model param names are different can't load each other
+have implemented save and resume DDP model
 """
 import os
 from datetime import datetime
