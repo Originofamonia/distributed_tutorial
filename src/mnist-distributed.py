@@ -82,13 +82,13 @@ class ConvNet(nn.Module):
 
 
 def train(gpu, args, train_dataset, model, loss_fn, optimizer):
-    print(f'using GPU: {gpu}')
+    print(f'using gpu: {gpu}')
     rank = args.nr * args.gpus + gpu
     dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
 
     torch.cuda.set_device(gpu)
     model.cuda(gpu)
-    
+
     # Wrap the model
     model = DDP(model, device_ids=[gpu])
     # Data loading code
@@ -101,11 +101,11 @@ def train(gpu, args, train_dataset, model, loss_fn, optimizer):
                               num_workers=2,
                               pin_memory=True,
                               sampler=train_sampler)
-    
+
     if args.resume:
-        print('resume training')
+        print(f'resume training: {rank}')
         dist.barrier()
-        map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+        map_location = {f'cuda:0': f'cuda:{rank}'}
         model.load_state_dict(torch.load(args.ckpt_path, map_location=map_location))
 
     start = datetime.now()
