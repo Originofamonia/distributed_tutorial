@@ -28,7 +28,7 @@ def main():
                         help='number of server nodes')
     parser.add_argument('-g', '--gpus', default=2, type=int,
                         help='number of gpus per node')
-    parser.add_argument('-nr', '--rank', default=0, type=int,
+    parser.add_argument('-nr', '--rank', default=-1, type=int,
                         help='ranking within the nodes, whether use DDP')
     parser.add_argument('--batch_size', default=128, type=int,
                         help='batch size')
