@@ -89,11 +89,12 @@ class ConvNet(nn.Module):
 
 def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
     print(f'using gpu: {gpu}')
+    torch.cuda.set_device(gpu)
+    model.cuda(gpu)
     if opt.ddp:
         rank = opt.nr * opt.gpus + gpu
         dist.init_process_group(backend='nccl', init_method='env://', world_size=opt.world_size, rank=rank)
-        torch.cuda.set_device(gpu)
-        model.cuda(gpu)
+        
         model = DDP(model, device_ids=[gpu])
         # Data loading code
         train_sampler = DistributedSampler(train_dataset,
@@ -106,7 +107,7 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
                                 pin_memory=True,
                                 sampler=train_sampler)
     else:
-        model.cuda()
+        # model.cuda(gpu)
         train_loader = DataLoader(dataset=train_dataset,
                                 batch_size=opt.batch_size,
                                 shuffle=True,
