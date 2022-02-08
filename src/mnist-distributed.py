@@ -28,16 +28,14 @@ def main():
                         help='number of server nodes')
     parser.add_argument('-g', '--gpus', default=2, type=int,
                         help='number of gpus per node')
-    parser.add_argument('-nr', '--nr', default=0, type=int,
-                        help='ranking within the nodes')
+    parser.add_argument('-nr', '--rank', default=0, type=int,
+                        help='ranking within the nodes, whether use DDP')
     parser.add_argument('--batch_size', default=128, type=int,
                         help='batch size')
     parser.add_argument('--seed', default=444, type=int,
                         help='seed')
     parser.add_argument('--lr', default=1e-3, type=float,
-                        help='learning rate')
-    parser.add_argument('--ddp', default=True, type=bool,
-                        help='whether use DDP')                        
+                        help='learning rate')  
     parser.add_argument('--save', default=True, type=bool,
                         help='save model after training')
     parser.add_argument('--resume', default=True, type=bool,
@@ -55,7 +53,7 @@ def main():
     model = ConvNet()
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), opt.lr)
-    if opt.ddp:
+    if opt.rank != -1:
         opt.world_size = opt.gpus * opt.nodes
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '14444'
@@ -91,8 +89,8 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
     print(f'using gpu: {gpu}')
     torch.cuda.set_device(gpu)
     model.cuda(gpu)
-    if opt.ddp:
-        rank = opt.nr * opt.gpus + gpu
+    if opt.rank != -1:
+        rank = opt.rank * opt.gpus + gpu
         dist.init_process_group(backend='nccl', init_method='env://', world_size=opt.world_size, rank=rank)
         
         model = DDP(model, device_ids=[gpu])
