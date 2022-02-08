@@ -103,6 +103,7 @@ def train(gpu, args, train_dataset, model, loss_fn, optimizer):
                               sampler=train_sampler)
     
     if args.resume:
+        print('resume training')
         dist.barrier()
         map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
         model.load_state_dict(torch.load(args.ckpt_path, map_location=map_location))
