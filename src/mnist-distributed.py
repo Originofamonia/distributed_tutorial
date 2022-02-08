@@ -56,18 +56,20 @@ class ConvNet(nn.Module):
 
 
 def train(gpu, args):
+    print(f'using GPU: {gpu}')
     rank = args.nr * args.gpus + gpu
     dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
     torch.manual_seed(0)
+
     model = ConvNet()
     torch.cuda.set_device(gpu)
     model.cuda(gpu)
-    batch_size = 100
+    batch_size = 128
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss()  # .cuda(gpu)
     optimizer = torch.optim.SGD(model.parameters(), 1e-3)
     # Wrap the model
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
+    model = DDP(model, device_ids=[gpu])
     # Data loading code
     train_dataset = torchvision.datasets.CIFAR10(root='./',
                                                train=True,
@@ -98,7 +100,7 @@ def train(gpu, args):
             loss.backward()
             optimizer.step()
             if (i + 1) % 100 == 0 and gpu == 0:
-                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(epoch + 1, args.epochs, i + 1, total_step,
+                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.3f}'.format(epoch + 1, args.epochs, i + 1, total_step,
                                                                          loss.item()))
     if gpu == 0:
         print("Training complete in: " + str(datetime.now() - start))
