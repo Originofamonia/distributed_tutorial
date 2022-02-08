@@ -87,7 +87,7 @@ class ConvNet(nn.Module):
 
 def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
     print(f'using gpu: {gpu}')
-    torch.cuda.set_device(gpu)
+    torch.cuda.set_device(int(gpu))
     model.cuda(gpu)
     if opt.rank != -1:
         rank = opt.rank * opt.gpus + gpu
