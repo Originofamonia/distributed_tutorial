@@ -1,3 +1,6 @@
+"""
+https://github.com/Originofamonia/distributed_tutorial
+"""
 import os
 from datetime import datetime
 import argparse
@@ -9,7 +12,7 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 # from apex.parallel import DistributedDataParallel as DDP
-from apex import amp
+from torch.cuda import amp
 
 
 def cleanup():
@@ -19,17 +22,23 @@ def cleanup():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--nodes', default=1, type=int, metavar='N',
-                        help='number of data loading workers (default: 4)')
+                        help='number of server nodes')
     parser.add_argument('-g', '--gpus', default=2, type=int,
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
+    parser.add_argument('--batch_size', default=128, type=int,
+                        help='batch size')
+    parser.add_argument('--seed', default=444, type=int,
+                        help='seed')
+    parser.add_argument('--lr', default=1e-3, type=float,
+                        help='learning rate')
     parser.add_argument('--epochs', default=2, type=int, metavar='N',
                         help='number of total epochs to run')
     args = parser.parse_args()
     args.world_size = args.gpus * args.nodes
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12444'
+    os.environ['MASTER_PORT'] = '14444'
     mp.spawn(train, nprocs=args.gpus, args=(args,))
 
 
@@ -60,15 +69,15 @@ def train(gpu, args):
     print(f'using GPU: {gpu}')
     rank = args.nr * args.gpus + gpu
     dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
-    torch.manual_seed(0)
+    torch.manual_seed(args.seed)
 
     model = ConvNet()
     torch.cuda.set_device(gpu)
     model.cuda(gpu)
-    batch_size = 128
+
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss()  # .cuda(gpu)
-    optimizer = torch.optim.SGD(model.parameters(), 1e-3)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), args.lr)
     # Wrap the model
     model = DDP(model, device_ids=[gpu])
     # Data loading code
@@ -80,8 +89,8 @@ def train(gpu, args):
                                                                     num_replicas=args.world_size,
                                                                     rank=rank)
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                               batch_size=batch_size,
-                                               shuffle=False,
+                                               batch_size=args.batch_size,
+                                               shuffle=False,  # must be False
                                                num_workers=4,
                                                pin_memory=True,
                                                sampler=train_sampler)
@@ -89,9 +98,9 @@ def train(gpu, args):
     start = datetime.now()
     total_step = len(train_loader)
     for epoch in range(args.epochs):
-        for i, (images, labels) in enumerate(train_loader):
-            images = images.cuda(non_blocking=True)
-            labels = labels.cuda(non_blocking=True)
+        for j, batch in enumerate(train_loader):
+            batch = tuple(item.cuda() for item in batch)
+            images, labels = batch
             # Forward pass
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -100,9 +109,16 @@ def train(gpu, args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if (i + 1) % 100 == 0 and gpu == 0:
-                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.3f}'.format(epoch + 1, args.epochs, i + 1, total_step,
-                                                                         loss.item()))
+            if (j) % 100 == 0:  # and gpu == 0:
+                print(f'Epoch [{epoch}/{args.epochs}], Step [{j}/{total_step}], Loss: {loss.item():.3f}')
+    
+    if rank == 0:
+        # All processes should see same parameters as they all start from same
+        # random parameters and gradients are synchronized in backward passes.
+        # Therefore, saving it in one process is sufficient.
+        ckpt_path = f'model.pt'
+        torch.save(model.state_dict(), ckpt_path)
+
     if gpu == 0:
         print("Training complete in: " + str(datetime.now() - start))
     
