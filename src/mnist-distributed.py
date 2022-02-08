@@ -28,8 +28,8 @@ def main():
                         help='number of server nodes')
     parser.add_argument('-g', '--gpus', default=2, type=int,
                         help='number of gpus per node')
-    parser.add_argument('-nr', '--rank', default=-1, type=int,
-                        help='ranking within the nodes, whether use DDP')
+    parser.add_argument('-nr', '--rank', default=0, type=int,
+                        help='ranking within the nodes, whether use DDP: 0, non-DDP: -1')
     parser.add_argument('--batch_size', default=128, type=int,
                         help='batch size')
     parser.add_argument('--seed', default=444, type=int,
@@ -91,7 +91,8 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
     model.cuda(int(gpu))
     if opt.rank != -1:
         rank = opt.rank * opt.gpus + gpu
-        dist.init_process_group(backend='nccl', init_method='env://', world_size=opt.world_size, rank=rank)
+        dist.init_process_group(backend='nccl', init_method='env://', 
+                                world_size=opt.world_size, rank=rank)
         
         model = DDP(model, device_ids=[gpu])
         # Data loading code
@@ -105,7 +106,6 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
                                 pin_memory=True,
                                 sampler=train_sampler)
     else:
-        # model.cuda(gpu)
         train_loader = DataLoader(dataset=train_dataset,
                                 batch_size=opt.batch_size,
                                 shuffle=True,
@@ -118,8 +118,9 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
             dist.barrier()
             map_location = {f'cuda:0': f'cuda:{gpu}'}
             print(f'map location: {map_location}')
-            model.load_state_dict(torch.load(opt.ckpt_path, map_location=map_location))
-        else:
+            model.load_state_dict(torch.load(opt.ckpt_path, 
+                                  map_location=map_location))
+        else:  # DDP, non-DDP model are different
             model.load_state_dict(torch.load(opt.ckpt_path))
 
     start = datetime.now()
